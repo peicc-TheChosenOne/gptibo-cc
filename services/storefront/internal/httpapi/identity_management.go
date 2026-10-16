@@ -244,6 +244,7 @@ func register(r *gin.Engine, s *store.Store, opts Options) {
 			if role == "admin" {
 				out["configured"] = a.AdminConfigured()
 				out["temporaryPasswordLogin"] = a.TemporaryPasswordLogin()
+				out["temporaryPasswordOnly"] = a.TemporaryPasswordOnly()
 				if e == nil {
 					out["username"] = a.Username()
 				}

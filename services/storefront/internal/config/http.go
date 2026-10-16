@@ -140,6 +140,13 @@ func LoadHTTP() (HTTP, error) {
 	if e != nil {
 		return h, e
 	}
+	h.Auth.TemporaryPasswordOnly, e = flag("ADMIN_TEMP_PASSWORD_ONLY")
+	if e != nil {
+		return h, e
+	}
+	if h.Auth.TemporaryPasswordOnly && !h.Auth.TemporaryPasswordLogin {
+		return h, errors.New("ADMIN_TEMP_PASSWORD_ONLY requires ADMIN_TEMP_PASSWORD_LOGIN")
+	}
 	if h.Auth.TemporaryPasswordLogin {
 		h.Auth.AdminPasswordHash, e = Secret("ADMIN_PASSWORD_HASH")
 		if e != nil {

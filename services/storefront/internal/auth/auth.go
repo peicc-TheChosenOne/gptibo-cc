@@ -53,6 +53,7 @@ type Config struct {
 	Secret, AdminUsername, AdminEmail, AdminTOTP string
 	Sender                                       Sender
 	TemporaryPasswordLogin                       bool
+	TemporaryPasswordOnly                        bool
 	AdminPasswordHash                            string
 }
 type Service struct {
@@ -93,6 +94,9 @@ func New(s *store.Store, cfg Config) (*Service, error) {
 		}
 		a.cfg.AdminEmail = email
 	}
+	if cfg.TemporaryPasswordOnly && !cfg.TemporaryPasswordLogin {
+		return nil, errors.New("password-only login requires temporary administrator password login")
+	}
 	if cfg.TemporaryPasswordLogin {
 		cost, err := bcrypt.Cost([]byte(cfg.AdminPasswordHash))
 		if !a.AdminConfigured() || len(cfg.AdminPasswordHash) != 60 || err != nil || cost < 12 || cost > 14 {
@@ -115,6 +119,7 @@ func (a *Service) AdminConfigured() bool {
 	return a != nil && len(a.key) == 32 && a.cfg.AdminUsername != "" && security.ValidTOTP(a.cfg.AdminTOTP)
 }
 func (a *Service) TemporaryPasswordLogin() bool { return a != nil && a.cfg.TemporaryPasswordLogin }
+func (a *Service) TemporaryPasswordOnly() bool  { return a != nil && a.cfg.TemporaryPasswordOnly }
 func (a *Service) Username() string             { return a.cfg.AdminUsername }
 func (a *Service) version(role, subject string, version int64) string {
 	value := fmt.Sprintf("%s:%s:%d", role, subject, version)
@@ -122,6 +127,9 @@ func (a *Service) version(role, subject string, version int64) string {
 		value += ":" + a.cfg.AdminEmail + ":" + a.cfg.AdminTOTP
 		if a.TemporaryPasswordLogin() {
 			value += ":temporary-password:" + a.cfg.AdminPasswordHash
+			if a.TemporaryPasswordOnly() {
+				value += ":password-only"
+			}
 		}
 	}
 	return security.MAC(a.key, "credential:"+value)
@@ -235,6 +243,7 @@ func (a *Service) Send(ctx context.Context, role string, in SendInput, ip string
 
 func (a *Service) Verify(ctx context.Context, role string, in VerifyInput, ip string) (string, error) {
 	passwordLogin := role == "admin" && a.TemporaryPasswordLogin()
+	passwordOnly := passwordLogin && a.TemporaryPasswordOnly()
 	if (!a.Ready() && !passwordLogin) || (role == "admin" && !a.AdminConfigured()) {
 		return "", fault.New(503, "邮箱验证尚未配置。")
 	}
@@ -296,9 +305,11 @@ func (a *Service) Verify(ctx context.Context, role string, in VerifyInput, ip st
 		if in.Username != a.cfg.AdminUsername || subject != a.cfg.AdminUsername {
 			return "", invalid()
 		}
-		step = security.VerifyTOTP(a.cfg.AdminTOTP, in.Code, time.Now())
-		if step < 0 {
-			return "", invalid()
+		if !passwordOnly {
+			step = security.VerifyTOTP(a.cfg.AdminTOTP, in.Code, time.Now())
+			if step < 0 {
+				return "", invalid()
+			}
 		}
 	}
 	tx, e := a.Store.DB.Begin(ctx)
@@ -319,7 +330,7 @@ func (a *Service) Verify(ctx context.Context, role string, in VerifyInput, ip st
 			return "", invalid()
 		}
 	}
-	if role == "admin" {
+	if role == "admin" && !passwordOnly {
 		tag, e := tx.Exec(ctx, `INSERT INTO admin_totp_usage(credential_version,last_step) VALUES($1,$2)
  ON CONFLICT(credential_version) DO UPDATE SET last_step=excluded.last_step WHERE admin_totp_usage.last_step<excluded.last_step`, credential, step)
 		if e != nil {

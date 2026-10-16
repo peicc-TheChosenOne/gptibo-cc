@@ -23,6 +23,8 @@ docker compose up -d --wait api worker
 
 临时验收可叠加 `compose.auth-temporary.yaml`，仅管理员改用“用户名＋密码＋TOTP”，不依赖邮件。该模式默认关闭，必须显式设置 `ADMIN_TEMP_PASSWORD_LOGIN=true`，同时通过 `ADMIN_PASSWORD_HASH_FILE` 提供 bcrypt 密码散列（cost 12–14），并保留独立管理员身份及 TOTP 配置。真实密码只在私有文件中保存，不写入 Compose、命令参数、日志或仓库。临时模式仍使用原有限流、动态码防重放和安全会话；代理及客户的邮件登录不受此开关影响。
 
+确需临时只用用户名和密码时，可额外显式设置 `ADMIN_TEMP_PASSWORD_ONLY=true`，且必须同时开启临时密码登录；该选项默认关闭，仅跳过管理员动态码，不改变密码校验、限流或其他角色登录。验证器配置保留。将此选项恢复为 `false` 并重新创建 API，即恢复密码＋TOTP，纯密码模式的会话立即失效。
+
 验收后移除临时叠加文件，或将 `ADMIN_TEMP_PASSWORD_LOGIN` 设为 `false` 并重新创建 API，即可恢复原邮件验证流程；临时会话随模式切换失效。恢复邮件登录前仍需配置实际邮件服务。
 
 其他接入参数见 `.env.integrations.example`。复制为 `.env.integrations` 后可叠加 `compose.integrations.yaml`；所有开关默认关闭，匿名适配器的保留域名无法用于真实交易。必须先按自己的上游协议完成开发和测试，不能直接填生产秘密试运行。可选域名配置在 `compose.domains.yaml`，仅使用自己新建的云资源。

@@ -111,3 +111,15 @@ func TestTemporaryAdminPasswordConfiguration(t *testing.T) {
 		t.Fatal("password hash file not loaded", err)
 	}
 }
+
+func TestPasswordOnlyConfigurationFailsClosed(t *testing.T) {
+	t.Setenv("ADMIN_TEMP_PASSWORD_LOGIN", "false")
+	t.Setenv("ADMIN_TEMP_PASSWORD_ONLY", "true")
+	if _, err := LoadHTTP(); err == nil {
+		t.Fatal("password-only accepted without temporary password mode")
+	}
+	t.Setenv("ADMIN_TEMP_PASSWORD_ONLY", "typo")
+	if _, err := LoadHTTP(); err == nil {
+		t.Fatal("invalid password-only flag accepted")
+	}
+}

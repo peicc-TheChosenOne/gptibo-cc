@@ -28,6 +28,12 @@ func TestTemporaryPasswordModeRequiresExplicitCompleteConfiguration(t *testing.T
 	if err != nil || !a.AdminConfigured() || !a.TemporaryPasswordLogin() || a.Ready() {
 		t.Fatal("password mode did not remain independent of mail", err)
 	}
+	cfg.TemporaryPasswordOnly = true
+	only, err := New(nil, cfg)
+	if err != nil || !only.TemporaryPasswordOnly() || only.version("admin", cfg.AdminUsername, 0) == a.version("admin", cfg.AdminUsername, 0) {
+		t.Fatal("password-only mode must have a separate credential version", err)
+	}
+	cfg.TemporaryPasswordOnly = false
 	oldVersion := a.version("admin", cfg.AdminUsername, 0)
 	cfg.TemporaryPasswordLogin = false
 	restored, err := New(nil, cfg)
@@ -38,5 +44,11 @@ func TestTemporaryPasswordModeRequiresExplicitCompleteConfiguration(t *testing.T
 	cfg.AdminTOTP = ""
 	if _, err = New(nil, cfg); err == nil {
 		t.Fatal("password mode accepted missing TOTP")
+	}
+}
+
+func TestPasswordOnlyCannotBypassTemporaryPasswordConfiguration(t *testing.T) {
+	if _, err := New(nil, Config{TemporaryPasswordOnly: true}); err == nil {
+		t.Fatal("password-only mode accepted without temporary password login")
 	}
 }
