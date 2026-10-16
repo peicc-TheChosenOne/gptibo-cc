@@ -1,0 +1,15 @@
+# Temporary administrator password + TOTP login. Omit this overlay to restore email login.
+services:
+  api:
+    environment:
+      ADMIN_TEMP_PASSWORD_LOGIN: "true"
+      ADMIN_USERNAME: ${ADMIN_USERNAME:?set an independent administrator username}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:?set the administrator email}
+      ADMIN_TOTP_SECRET_FILE: /run/secrets/admin_totp
+      ADMIN_PASSWORD_HASH_FILE: /run/secrets/admin_password_hash
+    secrets: [admin_totp, admin_password_hash]
+secrets:
+  admin_totp:
+    file: ./.secrets/admin-totp
+  admin_password_hash:
+    file: ./.secrets/admin-password-hash

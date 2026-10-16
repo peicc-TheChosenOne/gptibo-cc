@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"golang.org/x/crypto/bcrypt"
 	"gptibo/storefront/internal/domains"
 	"gptibo/storefront/internal/fault"
 	"gptibo/storefront/internal/security"
@@ -51,6 +52,8 @@ func (a *Service) Invite(ctx context.Context, id, origin string) error {
 type Config struct {
 	Secret, AdminUsername, AdminEmail, AdminTOTP string
 	Sender                                       Sender
+	TemporaryPasswordLogin                       bool
+	AdminPasswordHash                            string
 }
 type Service struct {
 	Store *store.Store
@@ -65,6 +68,7 @@ type SendInput struct {
 	Email          string `json:"email"`
 }
 type VerifyInput struct {
+	Password       string `json:"password"`
 	TurnstileToken string `json:"turnstileToken"`
 	Username       string `json:"username"`
 	Email          string `json:"email"`
@@ -89,6 +93,12 @@ func New(s *store.Store, cfg Config) (*Service, error) {
 		}
 		a.cfg.AdminEmail = email
 	}
+	if cfg.TemporaryPasswordLogin {
+		cost, err := bcrypt.Cost([]byte(cfg.AdminPasswordHash))
+		if !a.AdminConfigured() || len(cfg.AdminPasswordHash) != 60 || err != nil || cost < 12 || cost > 14 {
+			return nil, errors.New("temporary administrator login requires complete identity and a bcrypt password hash with cost 12 to 14")
+		}
+	}
 	return a, nil
 }
 func Email(value string) (string, error) {
@@ -104,11 +114,15 @@ func (a *Service) Ready() bool { return a != nil && len(a.key) == 32 && a.cfg.Se
 func (a *Service) AdminConfigured() bool {
 	return a != nil && len(a.key) == 32 && a.cfg.AdminUsername != "" && security.ValidTOTP(a.cfg.AdminTOTP)
 }
-func (a *Service) Username() string { return a.cfg.AdminUsername }
+func (a *Service) TemporaryPasswordLogin() bool { return a != nil && a.cfg.TemporaryPasswordLogin }
+func (a *Service) Username() string             { return a.cfg.AdminUsername }
 func (a *Service) version(role, subject string, version int64) string {
 	value := fmt.Sprintf("%s:%s:%d", role, subject, version)
 	if role == "admin" {
 		value += ":" + a.cfg.AdminEmail + ":" + a.cfg.AdminTOTP
+		if a.TemporaryPasswordLogin() {
+			value += ":temporary-password:" + a.cfg.AdminPasswordHash
+		}
 	}
 	return security.MAC(a.key, "credential:"+value)
 }
@@ -220,7 +234,8 @@ func (a *Service) Send(ctx context.Context, role string, in SendInput, ip string
 }
 
 func (a *Service) Verify(ctx context.Context, role string, in VerifyInput, ip string) (string, error) {
-	if !a.Ready() || (role == "admin" && !a.AdminConfigured()) {
+	passwordLogin := role == "admin" && a.TemporaryPasswordLogin()
+	if (!a.Ready() && !passwordLogin) || (role == "admin" && !a.AdminConfigured()) {
 		return "", fault.New(503, "邮箱验证尚未配置。")
 	}
 	if e := a.Limit(ctx, role+":verify:ip:"+ip, 20, 900); e != nil {
@@ -253,20 +268,28 @@ func (a *Service) Verify(ctx context.Context, role string, in VerifyInput, ip st
 	if role == "admin" {
 		code = in.EmailCode
 	}
-	if !security.ValidID(id) || !security.ValidCode(code) {
-		return "", invalid()
-	}
 	var subject, credential, hash string
-	e := a.Store.DB.QueryRow(ctx, `UPDATE auth_challenges SET attempts=attempts+1 WHERE id=$1 AND role=$2 AND domain_scope=$3 AND ready AND NOT used AND attempts<5 AND expires_at>now()
- RETURNING subject,credential_version,code_hash`, id, role, domains.Current(ctx).AuthScope(role)).Scan(&subject, &credential, &hash)
-	if errors.Is(e, pgx.ErrNoRows) {
-		return "", invalid()
-	}
-	if e != nil {
-		return "", e
-	}
-	if !security.Equal(hash, a.codeHash(role, id, code)) {
-		return "", invalid()
+	if passwordLogin {
+		if len(in.Password) > 72 || bcrypt.CompareHashAndPassword([]byte(a.cfg.AdminPasswordHash), []byte(in.Password)) != nil || !security.Equal(in.Username, a.cfg.AdminUsername) {
+			return "", invalid()
+		}
+		subject = a.cfg.AdminUsername
+		credential = a.version(role, subject, 0)
+	} else {
+		if !security.ValidID(id) || !security.ValidCode(code) {
+			return "", invalid()
+		}
+		e := a.Store.DB.QueryRow(ctx, `UPDATE auth_challenges SET attempts=attempts+1 WHERE id=$1 AND role=$2 AND domain_scope=$3 AND ready AND NOT used AND attempts<5 AND expires_at>now()
+	 RETURNING subject,credential_version,code_hash`, id, role, domains.Current(ctx).AuthScope(role)).Scan(&subject, &credential, &hash)
+		if errors.Is(e, pgx.ErrNoRows) {
+			return "", invalid()
+		}
+		if e != nil {
+			return "", e
+		}
+		if !security.Equal(hash, a.codeHash(role, id, code)) {
+			return "", invalid()
+		}
 	}
 	step := int64(-1)
 	if role == "admin" {
@@ -287,15 +310,17 @@ func (a *Service) Verify(ctx context.Context, role string, in VerifyInput, ip st
 	if e = a.ValidatePrincipal(ctx, tx, p); e != nil {
 		return "", e
 	}
-	tag, e := tx.Exec(ctx, "UPDATE auth_challenges SET used=true WHERE id=$1 AND role=$2 AND NOT used AND ready AND attempts<=5 AND expires_at>now()", id, role)
-	if e != nil {
-		return "", e
-	}
-	if tag.RowsAffected() != 1 {
-		return "", invalid()
+	if !passwordLogin {
+		tag, e := tx.Exec(ctx, "UPDATE auth_challenges SET used=true WHERE id=$1 AND role=$2 AND NOT used AND ready AND attempts<=5 AND expires_at>now()", id, role)
+		if e != nil {
+			return "", e
+		}
+		if tag.RowsAffected() != 1 {
+			return "", invalid()
+		}
 	}
 	if role == "admin" {
-		tag, e = tx.Exec(ctx, `INSERT INTO admin_totp_usage(credential_version,last_step) VALUES($1,$2)
+		tag, e := tx.Exec(ctx, `INSERT INTO admin_totp_usage(credential_version,last_step) VALUES($1,$2)
  ON CONFLICT(credential_version) DO UPDATE SET last_step=excluded.last_step WHERE admin_totp_usage.last_step<excluded.last_step`, credential, step)
 		if e != nil {
 			return "", e

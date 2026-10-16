@@ -136,6 +136,16 @@ func LoadHTTP() (HTTP, error) {
 	if e != nil {
 		return h, e
 	}
+	h.Auth.TemporaryPasswordLogin, e = flag("ADMIN_TEMP_PASSWORD_LOGIN")
+	if e != nil {
+		return h, e
+	}
+	if h.Auth.TemporaryPasswordLogin {
+		h.Auth.AdminPasswordHash, e = Secret("ADMIN_PASSWORD_HASH")
+		if e != nil {
+			return h, e
+		}
+	}
 	enabled := strings.ToLower(os.Getenv("MAIL_ENABLED"))
 	if enabled != "" && enabled != "false" && enabled != "true" {
 		return h, errors.New("MAIL_ENABLED must be true or false")

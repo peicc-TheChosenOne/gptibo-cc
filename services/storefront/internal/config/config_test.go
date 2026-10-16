@@ -86,3 +86,28 @@ func TestHTTPConfigurationFailsClosed(t *testing.T) {
 		t.Fatal("mail enabled without auth secret")
 	}
 }
+
+func TestTemporaryAdminPasswordConfiguration(t *testing.T) {
+	t.Setenv("MAIL_ENABLED", "false")
+	t.Setenv("ADMIN_TEMP_PASSWORD_LOGIN", "false")
+	t.Setenv("ADMIN_PASSWORD_HASH_FILE", "/missing/unused-secret")
+	if h, err := LoadHTTP(); err != nil || h.Auth.TemporaryPasswordLogin {
+		t.Fatal("disabled mode read a password file", err)
+	}
+	t.Setenv("ADMIN_TEMP_PASSWORD_LOGIN", "typo")
+	if _, err := LoadHTTP(); err == nil {
+		t.Fatal("invalid flag accepted")
+	}
+	t.Setenv("ADMIN_TEMP_PASSWORD_LOGIN", "true")
+	if _, err := LoadHTTP(); err == nil {
+		t.Fatal("enabled mode accepted a missing password hash")
+	}
+	path := filepath.Join(t.TempDir(), "password-hash")
+	if err := os.WriteFile(path, []byte("fixture-hash\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ADMIN_PASSWORD_HASH_FILE", path)
+	if h, err := LoadHTTP(); err != nil || !h.Auth.TemporaryPasswordLogin || h.Auth.AdminPasswordHash != "fixture-hash" {
+		t.Fatal("password hash file not loaded", err)
+	}
+}
