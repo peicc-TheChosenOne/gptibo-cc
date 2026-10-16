@@ -1,0 +1,13 @@
+/opt/gptibo-cc/preview/logs/public-*.log {
+    daily
+    rotate 7
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 www adm
+    sharedscripts
+    postrotate
+        /usr/bin/nginx -s reopen -c /www/server/nginx/conf/nginx.conf
+    endscript
+}

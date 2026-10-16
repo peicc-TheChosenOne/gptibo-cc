@@ -1,0 +1,11 @@
+[Unit]
+Description=Renew storefront HTTPS certificate
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/gptibo-cc/preview/certbot-venv/bin/certbot renew --config-dir /opt/gptibo-cc/preview/letsencrypt --work-dir /opt/gptibo-cc/preview/acme-work --logs-dir /opt/gptibo-cc/preview/logs/letsencrypt --quiet --deploy-hook /opt/gptibo-cc/preview/reload-public-nginx.sh
+TimeoutStartSec=15min
+MemoryMax=256M
+CPUQuota=25%

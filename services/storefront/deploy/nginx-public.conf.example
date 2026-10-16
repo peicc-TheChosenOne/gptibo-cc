@@ -1,0 +1,42 @@
+server {
+    listen 80;
+    server_name store.example.invalid;
+    location ^~ /.well-known/acme-challenge/ {
+        root /opt/gptibo-cc/preview/acme-webroot;
+        default_type text/plain;
+        try_files $uri =404;
+    }
+    location / { return 301 https://store.example.invalid$request_uri; }
+}
+
+server {
+    listen 443 ssl;
+    server_name store.example.invalid;
+    ssl_certificate /opt/gptibo-cc/preview/letsencrypt/live/store.example.invalid/fullchain.pem;
+    ssl_certificate_key /opt/gptibo-cc/preview/letsencrypt/live/store.example.invalid/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    root /opt/gptibo-cc/preview/releases/a2deed3/web;
+    index index.html;
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options DENY always;
+    add_header Referrer-Policy no-referrer always;
+    access_log /opt/gptibo-cc/preview/logs/public-access.log;
+    error_log /opt/gptibo-cc/preview/logs/public-error.log warn;
+
+    location /api/ {
+        proxy_pass http://127.0.0.1:8093;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Host "";
+        proxy_set_header Forwarded "";
+        proxy_set_header Connection "";
+        proxy_read_timeout 60s;
+    }
+    location = /healthz {
+        proxy_pass http://127.0.0.1:8093/healthz;
+    }
+    location / { try_files $uri $uri/ /index.html; }
+}
